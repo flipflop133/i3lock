@@ -47,6 +47,9 @@ extern uint32_t last_resolution[2];
 /* Whether the unlock indicator is enabled (defaults to true). */
 extern bool unlock_indicator;
 
+/* Whether the date is enabled (defaults to false). */
+extern bool date;
+
 /* List of pressed modifiers, or NULL if none are pressed. */
 extern char *modifier_string;
 /* Name of the current keyboard layout or NULL if not initialized. */
@@ -216,6 +219,30 @@ void draw_image(xcb_pixmap_t bg_pixmap, uint32_t *resolution) {
             cairo_fill(xcb_ctx);
             cairo_pattern_destroy(pattern);
         }
+    }
+
+    // Draw date
+    if(date && time_props != NULL){
+        cairo_t *clock_ctx = cairo_create(xcb_output);
+        cairo_set_source_rgb(clock_ctx, date_color, date_color, date_color);
+        cairo_select_font_face(clock_ctx, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+        cairo_set_font_size(clock_ctx, 50.0);
+        cairo_text_extents_t clock_extents;
+        cairo_text_extents_t date_extents;
+
+        cairo_set_font_size(clock_ctx, 30.0);
+        char date[1024];
+        strftime(date, 1024, "%A, %d %B", time_props);
+        cairo_text_extents(clock_ctx, date, &date_extents);
+        cairo_move_to(clock_ctx, resolution[0]/2 - (date_extents.width/2) , resolution[1]/5);
+        cairo_show_text(clock_ctx, date);
+
+        cairo_set_font_size(clock_ctx, 150.0);
+        char clock[1024];
+        strftime(clock, 1024, "%I:%M", time_props);
+        cairo_text_extents(clock_ctx, clock, &clock_extents);
+        cairo_move_to(clock_ctx, resolution[0]/2 - (clock_extents.width/2) , resolution[1]/5 + date_extents.height + clock_extents.height);
+        cairo_show_text(clock_ctx, clock);
     }
 
     if (unlock_indicator &&
@@ -438,7 +465,9 @@ void redraw_screen(void) {
     }
 
     draw_image(bg_pixmap, last_resolution);
+
     xcb_change_window_attributes(conn, win, XCB_CW_BACK_PIXMAP, (uint32_t[1]){bg_pixmap});
+
     /* XXX: Possible optimization: Only update the area in the middle of the
      * screen instead of the whole screen. */
     xcb_clear_area(conn, 0, win, 0, 0, last_resolution[0], last_resolution[1]);

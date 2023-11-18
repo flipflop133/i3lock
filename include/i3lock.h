@@ -12,4 +12,6 @@
         }                                                          \
     } while (0)
 
+extern int date_color;
+extern struct tm *time_props;
 #endif

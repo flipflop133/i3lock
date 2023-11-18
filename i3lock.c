@@ -71,6 +71,7 @@ static char password[512];
 static bool beep = false;
 bool debug_mode = false;
 bool unlock_indicator = true;
+bool date = false;
 char *modifier_string = NULL;
 static bool dont_fork = false;
 struct ev_loop *main_loop;
@@ -98,6 +99,9 @@ bool tile = false;
 bool ignore_empty_password = false;
 bool skip_repeated_empty_password = false;
 
+char* current_date;
+char* previous_date;
+struct tm *time_props = NULL;
 /* isutf, u8_dec © 2005 Jeff Bezanson, public domain */
 #define isutf(c) (((c)&0xC0) != 0x80)
 
@@ -167,6 +171,17 @@ static bool load_compose_table(const char *locale) {
     xkb_compose_state = new_compose_state;
 
     return true;
+}
+
+void date_update_cb(EV_P_ ev_timer *w, int revents) {
+    time_t t = time(&t);
+    time_props = localtime(&t);
+    strftime(current_date, 1024, "%a %d %I:%M", time_props);
+    // This avoid calling redraw_screen too much
+    if (strcmp(current_date, previous_date) != 0) {
+        redraw_screen();
+    }
+    strcpy(previous_date, current_date);
 }
 
 /*
@@ -971,6 +986,45 @@ static void raise_loop(xcb_window_t window) {
     }
 }
 
+int date_color = 0;
+void determine_date_color(cairo_surface_t* img){
+    if(img!=NULL){
+        long red_tot = 0;
+        long green_tot = 0;
+        long blue_tot = 0;
+        long tot = 0;
+        for(int i = 0; i < last_resolution[0]; i++){
+            for(int j = 0; j < last_resolution[1]; j++){
+                uint32_t *data = (uint32_t *)cairo_image_surface_get_data(img);
+                uint32_t pixel_color = data[i+j];
+                // Extract individual color components
+                uint8_t red = (pixel_color >> 16) & 0xFF;
+                red_tot+=red;
+                uint8_t green = (pixel_color >> 8) & 0xFF;
+                green_tot+=green;
+                uint8_t blue = pixel_color & 0xFF;
+                blue_tot+=blue;
+                tot+=1;
+            }
+        }
+        red_tot/=tot;
+        green_tot/=tot;
+        blue_tot/=tot;
+        if(red_tot < 127.5 && green_tot < 127.5 && blue_tot < 127.5){
+            date_color = 255;
+        }
+    }
+    else{
+        int tot = 0;
+        for(int c = 0; c < (strlen(color)); c++){
+            tot += color[c] - '0';
+        }
+        if (tot / 2 < 127.5){
+            date_color = 255;
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     struct passwd *pw;
     char *username;
@@ -993,6 +1047,7 @@ int main(int argc, char *argv[]) {
         {"debug", no_argument, NULL, 0},
         {"help", no_argument, NULL, 'h'},
         {"no-unlock-indicator", no_argument, NULL, 'u'},
+        {"date", no_argument, NULL, 'D'},
         {"image", required_argument, NULL, 'i'},
         {"raw", required_argument, NULL, 0},
         {"tiling", no_argument, NULL, 't'},
@@ -1009,7 +1064,7 @@ int main(int argc, char *argv[]) {
     if (getenv("WAYLAND_DISPLAY") != NULL)
         errx(EXIT_FAILURE, "i3lock is a program for X11 and does not work on Wayland. Try https://github.com/swaywm/swaylock instead");
 
-    char *optstring = "hvnbdc:p:ui:teI:fk";
+    char *optstring = "hvnbdc:p:ui:teI:fkD";
     while ((o = getopt_long(argc, argv, optstring, longopts, &longoptind)) != -1) {
         switch (o) {
             case 'v':
@@ -1045,6 +1100,9 @@ int main(int argc, char *argv[]) {
             case 'i':
                 image_path = strdup(optarg);
                 break;
+            case 'D':
+                date = true;
+                break;
             case 't':
                 tile = true;
                 break;
@@ -1074,9 +1132,10 @@ int main(int argc, char *argv[]) {
                 break;
             default:
                 errx(EXIT_FAILURE, "Syntax: i3lock [-v] [-n] [-b] [-d] [-c color] [-u] [-p win|default]"
-                                   " [-i image.png] [-t] [-e] [-I timeout] [-f] [-k]");
+                                   " [-i image.png] [-t] [-e] [-I timeout] [-f] [-k] [-D]");
         }
     }
+    
 
     /* We need (relatively) random numbers for highlighting a random part of
      * the unlock indicator upon keypresses. */
@@ -1173,7 +1232,6 @@ int main(int argc, char *argv[]) {
 
     xcb_change_window_attributes(conn, screen->root, XCB_CW_EVENT_MASK,
                                  (uint32_t[]){XCB_EVENT_MASK_STRUCTURE_NOTIFY});
-
     if (image_raw_format != NULL && image_path != NULL) {
         /* Read image. 'read_raw_image' returns NULL on error,
          * so we don't have to handle errors here. */
@@ -1264,12 +1322,28 @@ int main(int argc, char *argv[]) {
     ev_prepare_init(xcb_prepare, xcb_prepare_cb);
     ev_prepare_start(main_loop, xcb_prepare);
 
+
+    // start ev date timer
+    if(date){
+        determine_date_color(img);
+        current_date = (char*) malloc(1024*sizeof(char));
+        previous_date = (char*) malloc(1024*sizeof(char));
+        ev_timer date_update_timer;
+        ev_timer_init(&date_update_timer, date_update_cb, 0.0, 1.0);
+        ev_timer_start(main_loop, &date_update_timer);
+    }
+
     /* Invoke the event callback once to catch all the events which were
      * received up until now. ev will only pick up new events (when the X11
      * file descriptor becomes readable). */
     ev_invoke(main_loop, xcb_check, 0);
     ev_loop(main_loop, 0);
 
+    if(date){
+        free(current_date);
+        free(previous_date);
+    }
+    
 #ifndef __OpenBSD__
     if (pam_cleanup) {
         pam_end(pam_handle, PAM_SUCCESS);
