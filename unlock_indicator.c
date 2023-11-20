@@ -170,6 +170,19 @@ static void check_modifier_keys(void) {
 }
 
 /*
+ * Removes character c from string str.
+ *
+ */
+void removeChar(char str[], char c) {
+    int i, j;
+    for (i = 0, j = 0; i < strlen(str); ++i) {
+        if (str[i] != c)
+            str[j++] = str[i];
+    }
+    str[j] = '\0';
+}
+
+/*
  * Draws global image with fill color onto a pixmap with the given
  * resolution and returns it.
  *
@@ -221,28 +234,82 @@ void draw_image(xcb_pixmap_t bg_pixmap, uint32_t *resolution) {
         }
     }
 
-    // Draw date
-    if(date && time_props != NULL){
+    if (date && time_props != NULL) {
         cairo_t *clock_ctx = cairo_create(xcb_output);
         cairo_set_source_rgb(clock_ctx, date_color, date_color, date_color);
         cairo_select_font_face(clock_ctx, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        cairo_set_font_size(clock_ctx, 50.0);
-        cairo_text_extents_t clock_extents;
-        cairo_text_extents_t date_extents;
 
+        // Display date
         cairo_set_font_size(clock_ctx, 30.0);
-        char date[1024];
-        strftime(date, 1024, "%A, %d %B", time_props);
+        char date[64];
+        strftime(date, 64, "%A, %d %B", time_props);
+        cairo_text_extents_t date_extents;
         cairo_text_extents(clock_ctx, date, &date_extents);
-        cairo_move_to(clock_ctx, resolution[0]/2 - (date_extents.width/2) , resolution[1]/5);
+        cairo_move_to(clock_ctx, resolution[0] / 2 - (date_extents.width / 2), resolution[1] / 5);
         cairo_show_text(clock_ctx, date);
 
+        // Display clock
         cairo_set_font_size(clock_ctx, 150.0);
-        char clock[1024];
-        strftime(clock, 1024, "%I:%M", time_props);
+        char clock[32];
+        strftime(clock, 32, "%I:%M", time_props);
+        cairo_text_extents_t clock_extents;
         cairo_text_extents(clock_ctx, clock, &clock_extents);
-        cairo_move_to(clock_ctx, resolution[0]/2 - (clock_extents.width/2) , resolution[1]/5 + date_extents.height + clock_extents.height);
+        cairo_move_to(clock_ctx, resolution[0] / 2 - (clock_extents.width / 2), resolution[1] / 5 + date_extents.height + clock_extents.height);
         cairo_show_text(clock_ctx, clock);
+
+        // Display calendar events
+        if (events[0] != '\0') {
+            struct Tokens {
+                struct Tokens *prev;
+                char *token;
+            };
+
+            char *events_copy = strdup(events);
+            char *token = strtok(events_copy, "\n");
+
+            struct Tokens *curr;
+            struct Tokens *prev;
+            int first = 1;
+            while (token != NULL) {
+                curr = (struct Tokens *)malloc(sizeof(struct Tokens));
+                curr->token = strdup(token);
+                if (!first) {
+                    curr->prev = prev;
+                } else {
+                    first = 0;
+                    curr->prev = NULL;
+                }
+
+                prev = curr;
+
+                token = strtok(NULL, "\n");
+            }
+
+            int total_height = 20;
+            while (curr != NULL) {
+                // Check for the presence of tab (\t) in the line
+                char *tab_position = strchr(curr->token, '\t');
+                int x = 0;
+                if (tab_position != NULL) {
+                    x += 50;
+                    cairo_set_font_size(clock_ctx, 25);
+                } else {
+                    cairo_set_font_size(clock_ctx, 30);
+                }
+
+                cairo_text_extents_t calendar_extents;
+                cairo_text_extents(clock_ctx, curr->token, &calendar_extents);
+
+                cairo_move_to(clock_ctx, 30 + x, resolution[1] - total_height);
+                total_height = total_height + calendar_extents.height + 5;
+                removeChar(curr->token, '\t');
+                cairo_show_text(clock_ctx, curr->token);
+
+                curr = curr->prev;
+            }
+        }
+
+        cairo_destroy(clock_ctx);
     }
 
     if (unlock_indicator &&

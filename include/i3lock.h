@@ -14,4 +14,5 @@
 
 extern int date_color;
 extern struct tm *time_props;
+extern char events[2048];
 #endif

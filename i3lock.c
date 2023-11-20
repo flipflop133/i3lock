@@ -99,11 +99,13 @@ bool tile = false;
 bool ignore_empty_password = false;
 bool skip_repeated_empty_password = false;
 
-char* current_date;
-char* previous_date;
+char *current_date;
+char *previous_date;
 struct tm *time_props = NULL;
+char events[2048] = {'\0'};
+
 /* isutf, u8_dec © 2005 Jeff Bezanson, public domain */
-#define isutf(c) (((c)&0xC0) != 0x80)
+#define isutf(c) (((c) & 0xC0) != 0x80)
 
 /*
  * Decrements i to point to the previous unicode glyph
@@ -182,6 +184,21 @@ void date_update_cb(EV_P_ ev_timer *w, int revents) {
         redraw_screen();
     }
     strcpy(previous_date, current_date);
+}
+
+void *retrieve_calendar_events(void *) {
+    if (events[0] == '\0') {
+        FILE *fp;
+        char buffer[1024];
+        fp = popen("python $HOME/.config/scripts/python/calendar_events/display_events.py",
+                   "r");
+        while (fgets(buffer, 1024 - 1, fp) != NULL) {
+            strcat(events, buffer);
+        }
+        pclose(fp);
+    }
+    redraw_screen();
+    return NULL;
 }
 
 /*
@@ -987,39 +1004,38 @@ static void raise_loop(xcb_window_t window) {
 }
 
 int date_color = 0;
-void determine_date_color(cairo_surface_t* img){
-    if(img!=NULL){
+void determine_date_color(cairo_surface_t *img) {
+    if (img != NULL) {
         long red_tot = 0;
         long green_tot = 0;
         long blue_tot = 0;
         long tot = 0;
-        for(int i = 0; i < last_resolution[0]; i++){
-            for(int j = 0; j < last_resolution[1]; j++){
+        for (int i = 0; i < last_resolution[0]; i++) {
+            for (int j = 0; j < last_resolution[1]; j++) {
                 uint32_t *data = (uint32_t *)cairo_image_surface_get_data(img);
-                uint32_t pixel_color = data[i+j];
+                uint32_t pixel_color = data[i + j];
                 // Extract individual color components
                 uint8_t red = (pixel_color >> 16) & 0xFF;
-                red_tot+=red;
+                red_tot += red;
                 uint8_t green = (pixel_color >> 8) & 0xFF;
-                green_tot+=green;
+                green_tot += green;
                 uint8_t blue = pixel_color & 0xFF;
-                blue_tot+=blue;
-                tot+=1;
+                blue_tot += blue;
+                tot += 1;
             }
         }
-        red_tot/=tot;
-        green_tot/=tot;
-        blue_tot/=tot;
-        if(red_tot < 127.5 && green_tot < 127.5 && blue_tot < 127.5){
+        red_tot /= tot;
+        green_tot /= tot;
+        blue_tot /= tot;
+        if (red_tot < 127.5 && green_tot < 127.5 && blue_tot < 127.5) {
             date_color = 255;
         }
-    }
-    else{
+    } else {
         int tot = 0;
-        for(int c = 0; c < (strlen(color)); c++){
+        for (int c = 0; c < (strlen(color)); c++) {
             tot += color[c] - '0';
         }
-        if (tot / 2 < 127.5){
+        if (tot / 2 < 127.5) {
             date_color = 255;
         }
     }
@@ -1135,7 +1151,6 @@ int main(int argc, char *argv[]) {
                                    " [-i image.png] [-t] [-e] [-I timeout] [-f] [-k] [-D]");
         }
     }
-    
 
     /* We need (relatively) random numbers for highlighting a random part of
      * the unlock indicator upon keypresses. */
@@ -1322,12 +1337,13 @@ int main(int argc, char *argv[]) {
     ev_prepare_init(xcb_prepare, xcb_prepare_cb);
     ev_prepare_start(main_loop, xcb_prepare);
 
-
     // start ev date timer
-    if(date){
+    if (date) {
         determine_date_color(img);
-        current_date = (char*) malloc(1024*sizeof(char));
-        previous_date = (char*) malloc(1024*sizeof(char));
+        pthread_t thread_id;
+        pthread_create(&thread_id, NULL, retrieve_calendar_events, NULL);
+        current_date = (char *)malloc(1024 * sizeof(char));
+        previous_date = (char *)malloc(1024 * sizeof(char));
         ev_timer date_update_timer;
         ev_timer_init(&date_update_timer, date_update_cb, 0.0, 1.0);
         ev_timer_start(main_loop, &date_update_timer);
@@ -1339,11 +1355,11 @@ int main(int argc, char *argv[]) {
     ev_invoke(main_loop, xcb_check, 0);
     ev_loop(main_loop, 0);
 
-    if(date){
+    if (date) {
         free(current_date);
         free(previous_date);
     }
-    
+
 #ifndef __OpenBSD__
     if (pam_cleanup) {
         pam_end(pam_handle, PAM_SUCCESS);
